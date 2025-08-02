@@ -49,7 +49,7 @@ public static class ProjectAnalyzer
                         // BOAExecuter<TRequest, TResponse>.Execute(xxx)
                         if (exprString.StartsWith("BOAExecuter<"))
                         {
-                            var callInfo = ParseExecuterCall(invocation, exprString);
+                            var callInfo = ParseExecuterCall(invocation, exprString, root, methodNode);
                             if (callInfo != null)
                                 methodInfo.ExecuterCalls.Add(callInfo);
                         }
@@ -64,7 +64,10 @@ public static class ProjectAnalyzer
         return allClassInfos;
     }
 
-    private static ExecuterCallInfo? ParseExecuterCall(InvocationExpressionSyntax invocation, string exprString)
+    /// <summary>
+    /// BOAExecuter çağrısından hem generic parametrelerini, hem de kullanılan değişkenin MethodName'ini bulur.
+    /// </summary>
+    private static ExecuterCallInfo? ParseExecuterCall(InvocationExpressionSyntax invocation, string exprString, SyntaxNode root, MethodDeclarationSyntax parentMethod)
     {
         // BOAExecuter<RequestType, ResponseType>.Execute(...)
         var genericStart = exprString.IndexOf('<');
@@ -87,24 +90,48 @@ public static class ProjectAnalyzer
             var arg = invocation.ArgumentList.Arguments[0];
             requestVarName = arg.ToString();
 
-            // parent methodun içinde atama varsa: someVar.MethodName = "abc"
-            var parentMethod = invocation.FirstAncestorOrSelf<MethodDeclarationSyntax>();
-            if (parentMethod != null)
+            // 1. Önce variable initializer (var someVar = new ... { MethodName = "..." }) içinde ara
+            var variableDecls = root.DescendantNodes().OfType<VariableDeclaratorSyntax>()
+                .Where(v => v.Identifier.Text == requestVarName);
+
+            foreach (var variable in variableDecls)
+            {
+                if (variable.Initializer?.Value is ObjectCreationExpressionSyntax objInit &&
+                    objInit.Initializer is InitializerExpressionSyntax init)
+                {
+                    foreach (var expr in init.Expressions.OfType<AssignmentExpressionSyntax>())
+                    {
+                        if (expr.Left.ToString() == "MethodName" &&
+                            expr.Right is LiteralExpressionSyntax literal)
+                        {
+                            methodName = literal.Token.ValueText;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 2. Eğer bulamazsa, method body'de someVar.MethodName = "..." atamalarını da tara
+            if (string.IsNullOrEmpty(methodName) && parentMethod != null)
             {
                 var assignments = parentMethod.DescendantNodes()
                     .OfType<AssignmentExpressionSyntax>()
                     .Where(a =>
-                        a.Left.ToString().Contains(requestVarName + ".MethodName") &&
+                        a.Left.ToString() == $"{requestVarName}.MethodName" &&
                         a.Right is LiteralExpressionSyntax);
 
                 foreach (var assignment in assignments)
                 {
                     if (assignment.Right is LiteralExpressionSyntax literal)
+                    {
                         methodName = literal.Token.ValueText;
+                        break;
+                    }
                 }
             }
         }
-        Console.WriteLine($"\t|-> FOUND EXECUTER CALL: BOAExecuter<{requestType}, {responseType}>.Execute({requestVarName}) \n\t [MethodName: {methodName}]");
+
+        Console.WriteLine($"\n\t|-> FOUND EXECUTER CALL:  \n\t\t BOAExecuter<{requestType}, {responseType}>.Execute({requestVarName})  \n\t\t Request Type: {requestType}   \n\t\t Response Type: {responseType} \n\t\t MethodName: {methodName}");
         return new ExecuterCallInfo
         {
             RequestType = requestType,
