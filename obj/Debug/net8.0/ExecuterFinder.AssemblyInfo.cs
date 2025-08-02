@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ExecuterFinder")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f71c73f1600121fa57c5b2696673f5d11b8386cf")]
 [assembly: System.Reflection.AssemblyProductAttribute("ExecuterFinder")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ExecuterFinder")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
