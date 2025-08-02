@@ -1,32 +1,26 @@
-﻿using ExecuterFinder.Analyzers;
-using ExecuterFinder.Models;
-using ExecuterFinder.Resolvers;
-
+﻿using ExecuterFinder.Models;
 class Program
 {
     static void Main(string[] args)
     {
-        var analyzer = new BOAExecuterAnalyzer();
-        var integrationCode = File.ReadAllText("/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/integration/LoansDealer-Integration-Loans-Dealer-DealerTransaction.cs");
-
-        var calls = analyzer.AnalyzeExecuterCalls(integrationCode);
-
-        var resolver = new OrchestrationMethodResolver();
-        string orchestrationRoot = "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orchestration";
-
-        foreach (var call in calls)
+        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction";
+        var classInfos = ProjectAnalyzer.AnalyzeProject(rootFolder);
+        
+        //TODO: Console
+        /*
+        foreach (var ci in classInfos)
         {
-            var matches = resolver.FindMatchingMethods(orchestrationRoot, call);
-
-            Console.WriteLine($"\n🔍 BOAExecuter Call:");
-            Console.WriteLine($"  RequestType : {call.RequestType}");
-            Console.WriteLine($"  MethodName  : {call.MethodName}");
-            Console.WriteLine($"  ResponseType: {call.ResponseType}");
-
-            foreach (var match in matches)
+            Console.WriteLine($"Class: {ci.Name} ({ci.FilePath})");
+            foreach (var m in ci.Methods)
             {
-                Console.WriteLine($"  ✅ Found: {match.ClassName}.{match.MethodName} in {match.FilePath}");
+                Console.WriteLine($"Method: {m.Name}({m.RequestType}) => {m.ResponseType}");
+                foreach (var ec in m.ExecuterCalls)
+                {
+                    Console.WriteLine($"Executer Call: BOAExecuter<{ec.RequestType}, {ec.ResponseType}>.Execute({ec.RequestVariableName}) [MethodName: {ec.MethodName}]");
+                }
             }
         }
+
+        */
     }
 }

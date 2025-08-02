@@ -38,6 +38,7 @@
 /Users/gamzenurdemir/Documents/project-graph/ExecuterFinder/obj/Debug/net8.0/ExecuterFinder.AssemblyInfoInputs.cache
 /Users/gamzenurdemir/Documents/project-graph/ExecuterFinder/obj/Debug/net8.0/ExecuterFinder.AssemblyInfo.cs
 /Users/gamzenurdemir/Documents/project-graph/ExecuterFinder/obj/Debug/net8.0/ExecuterFinder.csproj.CoreCompileInputs.cache
+/Users/gamzenurdemir/Documents/project-graph/ExecuterFinder/obj/Debug/net8.0/ExecuterFinder.sourcelink.json
 /Users/gamzenurdemir/Documents/project-graph/ExecuterFinder/obj/Debug/net8.0/Executer.E7FC200C.Up2Date
 /Users/gamzenurdemir/Documents/project-graph/ExecuterFinder/obj/Debug/net8.0/ExecuterFinder.dll
 /Users/gamzenurdemir/Documents/project-graph/ExecuterFinder/obj/Debug/net8.0/refint/ExecuterFinder.dll
