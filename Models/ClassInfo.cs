@@ -14,5 +14,13 @@ namespace ExecuterFinder.Models
         public string ResponseType { get; set; }
         public string RequestType { get; set; }
         public List<ExecuterCallInfo> ExecuterCalls { get; set; } = new();
+        public List<InvokeMethod> InvokedMethods { get; set; } = new();
     }
+
+    public class InvokeMethod
+    {
+        public string ClassName { get; set; } // Örn: BOA.Business.Kernel.Loans.RetailFinance.RetailLimitHistory
+        public string MethodName { get; set; } // Örn: GetRetailLimitHistoryByPersonIdApplicationId
+    }
+
 }

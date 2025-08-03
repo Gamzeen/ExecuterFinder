@@ -2,6 +2,9 @@ using ExecuterFinder.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 
 public static class ProjectAnalyzer
 {
@@ -13,8 +16,21 @@ public static class ProjectAnalyzer
         foreach (var file in allCsFiles)
         {
             var code = File.ReadAllText(file);
-            var tree = CSharpSyntaxTree.ParseText(code);
-            var root = tree.GetCompilationUnitRoot();
+            var syntaxTree = CSharpSyntaxTree.ParseText(code);
+
+            // 1. Gerekli referansları ekle (System, LINQ, vs.)
+            var refs = new List<MetadataReference>
+            {
+                MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
+                MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location)
+            };
+            // Eğer projenin kendi derlenmiş dll'leri varsa buraya ekle: (ÖRNEK)
+            // refs.Add(MetadataReference.CreateFromFile(@"C:\projelerim\BOA.Business.Kernel.Loans.RetailFinance.dll"));
+
+            var compilation = CSharpCompilation.Create("Analysis", new[] { syntaxTree }, refs);
+            var semanticModel = compilation.GetSemanticModel(syntaxTree);
+
+            var root = syntaxTree.GetCompilationUnitRoot();
 
             foreach (var classNode in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
             {
@@ -24,23 +40,19 @@ public static class ProjectAnalyzer
                     FilePath = file,
                     ClassType = "class"
                 };
-
                 Console.WriteLine($"\nANALYZING CLASS: {classInfo.Name} in file: {file}");
 
                 foreach (var methodNode in classNode.DescendantNodes().OfType<MethodDeclarationSyntax>())
                 {
-                    // İlk parametrenin tipi genellikle "request"
-                    string requestType = "";
-                    if (methodNode.ParameterList.Parameters.Count > 0)
-                        requestType = methodNode.ParameterList.Parameters[0].Type?.ToString() ?? "";
-
                     var methodInfo = new MethodInfo
                     {
                         Name = methodNode.Identifier.Text,
                         ResponseType = methodNode.ReturnType.ToString(),
-                        RequestType = requestType
+                        RequestType = methodNode.ParameterList.Parameters.Count > 0
+                            ? methodNode.ParameterList.Parameters[0].Type?.ToString() ?? ""
+                            : ""
                     };
-                    Console.WriteLine($"|-> FOUND METHOD: \n\tMethod Name: {methodInfo.Name} with \n\tRequest Type: {methodInfo.RequestType} and \n\tResponse Type: {methodInfo.ResponseType}");
+                    Console.WriteLine($"|-> FOUND METHOD: \n\tMethod Name: {methodInfo.Name}  \n\tRequest Type: {methodInfo.RequestType} \n\tResponse Type: {methodInfo.ResponseType}");
 
                     // Executer çağrılarını bul
                     foreach (var invocation in methodNode.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -55,14 +67,62 @@ public static class ProjectAnalyzer
                         }
                     }
 
+                    // --- Sadece iş class'ı method çağrılarını semantic ile bul ---
+                    foreach (var invocation in methodNode.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                    {
+                        if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+                        {
+                            var methodName = memberAccess.Name.Identifier.Text;
+
+                            // Çağıran değişkenin tipini semantic ile bul
+                            var exprSymbolInfo = semanticModel.GetSymbolInfo(memberAccess.Expression);
+                            var exprSymbol = exprSymbolInfo.Symbol;
+
+                            ITypeSymbol? typeSymbol = null;
+                            if (exprSymbol is ILocalSymbol localSym)
+                                typeSymbol = localSym.Type;
+                            else if (exprSymbol is IParameterSymbol paramSym)
+                                typeSymbol = paramSym.Type;
+                            else if (exprSymbol is IFieldSymbol fieldSym)
+                                typeSymbol = fieldSym.Type;
+                            else if (exprSymbol is IPropertySymbol propSym)
+                                typeSymbol = propSym.Type;
+
+                            if (typeSymbol != null)
+                            {
+                                string fullTypeName = typeSymbol.ToDisplayString(); // Tam namespace ile
+                                string assemblyName = typeSymbol.ContainingAssembly.Name;
+
+                                // Sadece System/Framework class'larını atla, diğerlerini ekle
+                                bool isFramework = assemblyName.StartsWith("System") || assemblyName == "mscorlib";
+
+                                if (!isFramework&& methodName != "InitializeGenericResponse")
+                                {
+                                    if (methodInfo.InvokedMethods == null)
+                                        methodInfo.InvokedMethods = new List<InvokeMethod>();
+
+                                    methodInfo.InvokedMethods.Add(new InvokeMethod
+                                    {
+                                        ClassName = fullTypeName,
+                                        MethodName = methodName
+                                    });
+                                    Console.WriteLine($"\n\t|-> FOUND INVOKED BOA METHOD: \n\t\t Class Name : {fullTypeName} \n\t\t Method Name :{methodName}");
+                           
+                                }
+                            }
+                        }
+                    }
+
                     classInfo.Methods.Add(methodInfo);
                 }
 
                 allClassInfos.Add(classInfo);
             }
         }
+
         return allClassInfos;
     }
+
 
     /// <summary>
     /// BOAExecuter çağrısından hem generic parametrelerini, hem de kullanılan değişkenin MethodName'ini bulur.

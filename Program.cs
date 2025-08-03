@@ -3,7 +3,7 @@ class Program
 {
     static void Main(string[] args)
     {
-        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction";
+        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-codes/noname";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-codes/copy";
         var classInfos = ProjectAnalyzer.AnalyzeProject(rootFolder);
         
         //TODO: Console
