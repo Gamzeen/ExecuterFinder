@@ -34,13 +34,22 @@ public static class ProjectAnalyzer
 
             foreach (var classNode in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
             {
+                // NAMESPACE'İ BUL
+                string classNamespace = "";
+                var namespaceNode = classNode.Ancestors().OfType<NamespaceDeclarationSyntax>().FirstOrDefault();
+                if (namespaceNode != null)
+                    classNamespace = namespaceNode.Name.ToString();
+                else
+                    classNamespace = "(global)";
+
                 var classInfo = new ClassInfo
                 {
                     Name = classNode.Identifier.Text,
                     FilePath = file,
-                    ClassType = "class"
+                    ClassType = "class",
+                    Namespace = classNamespace
                 };
-                Console.WriteLine($"\nANALYZING CLASS: {classInfo.Name} in file: {file}");
+                Console.WriteLine($"\nANALYZING CLASS: {classInfo.Name} \nIn file: {classInfo.FilePath} \nNamespace: {classInfo.Namespace}");
 
                 foreach (var methodNode in classNode.DescendantNodes().OfType<MethodDeclarationSyntax>())
                 {

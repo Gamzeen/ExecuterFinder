@@ -1,6 +1,6 @@
 namespace ExecuterFinder.Models
 {
-    public class ExecuterCallInfo
+    public class ExecuterCallInfo2
     {
         public string RequestType { get; set; }
         public string ResponseType { get; set; }
