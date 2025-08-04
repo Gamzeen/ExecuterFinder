@@ -110,12 +110,17 @@ public static class ProjectAnalyzer
                                     if (methodInfo.InvokedMethods == null)
                                         methodInfo.InvokedMethods = new List<InvokeMethod>();
 
+                                    int lastDot = fullTypeName.LastIndexOf(".");
+                                    string ns = lastDot > 0 ? fullTypeName.Substring(0, lastDot) : "";
+                                    string className = lastDot > 0 ? fullTypeName.Substring(lastDot + 1) : fullTypeName;
+
                                     methodInfo.InvokedMethods.Add(new InvokeMethod
                                     {
-                                        ClassName = fullTypeName,
-                                        MethodName = methodName
+                                        ClassName = className,
+                                        MethodName = methodName,
+                                        Namespace = ns
                                     });
-                                    Console.WriteLine($"\n\t|-> FOUND INVOKED BOA METHOD: \n\t\t Class Name : {fullTypeName} \n\t\t Method Name :{methodName}");
+                                    Console.WriteLine($"\n\t|-> FOUND INVOKED BOA METHOD: \n\t\t Method Name :{methodName} \n\t\t Namespace :{ns} \n\t\t Class Name : {className} ");
                            
                                 }
                             }
