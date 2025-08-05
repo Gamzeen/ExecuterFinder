@@ -49,7 +49,7 @@ public static class ProjectAnalyzer
                     ClassType = "class",
                     Namespace = classNamespace
                 };
-                Console.WriteLine($"\nANALYZING CLASS: {classInfo.Name} \nIn file: {classInfo.FilePath} \nNamespace: {classInfo.Namespace}");
+                //Console.WriteLine($"\nANALYZING CLASS: {classInfo.Name} \nIn file: {classInfo.FilePath} \nNamespace: {classInfo.Namespace}");
 
                 foreach (var methodNode in classNode.DescendantNodes().OfType<MethodDeclarationSyntax>())
                 {
@@ -61,7 +61,7 @@ public static class ProjectAnalyzer
                             ? methodNode.ParameterList.Parameters[0].Type?.ToString() ?? ""
                             : ""
                     };
-                    Console.WriteLine($"|-> FOUND METHOD: \n\tMethod Name: {methodInfo.Name}  \n\tRequest Type: {methodInfo.RequestType} \n\tResponse Type: {methodInfo.ResponseType}");
+                    //Console.WriteLine($"|-> FOUND METHOD: \n\tMethod Name: {methodInfo.Name}  \n\tRequest Type: {methodInfo.RequestType} \n\tResponse Type: {methodInfo.ResponseType}");
 
                     // Executer çağrılarını bul
                     foreach (var invocation in methodNode.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -120,7 +120,7 @@ public static class ProjectAnalyzer
                                         MethodName = methodName,
                                         Namespace = ns
                                     });
-                                    Console.WriteLine($"\n\t|-> FOUND INVOKED BOA METHOD: \n\t\t Method Name :{methodName} \n\t\t Namespace :{ns} \n\t\t Class Name : {className} ");
+                                    //Console.WriteLine($"\n\t|-> FOUND INVOKED BOA METHOD: \n\t\t Method Name :{methodName} \n\t\t Namespace :{ns} \n\t\t Class Name : {className} ");
                            
                                 }
                             }
@@ -205,7 +205,7 @@ public static class ProjectAnalyzer
             }
         }
 
-        Console.WriteLine($"\n\t|-> FOUND EXECUTER CALL:  \n\t\t BOAExecuter<{requestType}, {responseType}>.Execute({requestVarName})  \n\t\t Request Type: {requestType}   \n\t\t Response Type: {responseType} \n\t\t MethodName: {methodName}");
+        //Console.WriteLine($"\n\t|-> FOUND EXECUTER CALL:  \n\t\t BOAExecuter<{requestType}, {responseType}>.Execute({requestVarName})  \n\t\t Request Type: {requestType}   \n\t\t Response Type: {responseType} \n\t\t MethodName: {methodName}");
         return new ExecuterCallInfo
         {
             RequestType = requestType,
