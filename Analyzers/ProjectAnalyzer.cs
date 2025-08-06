@@ -18,14 +18,11 @@ public static class ProjectAnalyzer
             var code = File.ReadAllText(file);
             var syntaxTree = CSharpSyntaxTree.ParseText(code);
 
-            // 1. Gerekli referansları ekle (System, LINQ, vs.)
             var refs = new List<MetadataReference>
             {
                 MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
                 MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location)
             };
-            // Eğer projenin kendi derlenmiş dll'leri varsa buraya ekle: (ÖRNEK)
-            // refs.Add(MetadataReference.CreateFromFile(@"C:\projelerim\BOA.Business.Kernel.Loans.RetailFinance.dll"));
 
             var compilation = CSharpCompilation.Create("Analysis", new[] { syntaxTree }, refs);
             var semanticModel = compilation.GetSemanticModel(syntaxTree);
@@ -49,7 +46,6 @@ public static class ProjectAnalyzer
                     ClassType = "class",
                     Namespace = classNamespace
                 };
-                //Console.WriteLine($"\nANALYZING CLASS: {classInfo.Name} \nIn file: {classInfo.FilePath} \nNamespace: {classInfo.Namespace}");
 
                 foreach (var methodNode in classNode.DescendantNodes().OfType<MethodDeclarationSyntax>())
                 {
@@ -61,29 +57,24 @@ public static class ProjectAnalyzer
                             ? methodNode.ParameterList.Parameters[0].Type?.ToString() ?? ""
                             : ""
                     };
-                    //Console.WriteLine($"|-> FOUND METHOD: \n\tMethod Name: {methodInfo.Name}  \n\tRequest Type: {methodInfo.RequestType} \n\tResponse Type: {methodInfo.ResponseType}");
 
-                    // Executer çağrılarını bul
+                    
                     foreach (var invocation in methodNode.DescendantNodes().OfType<InvocationExpressionSyntax>())
                     {
                         var exprString = invocation.ToString();
-                        // BOAExecuter<TRequest, TResponse>.Execute(xxx)
+
+                        // 1. BOAExecuter<TRequest, TResponse>.Execute() kontrolü
                         if (exprString.StartsWith("BOAExecuter<"))
                         {
                             var callInfo = ParseExecuterCall(invocation, exprString, root, methodNode);
                             if (callInfo != null)
                                 methodInfo.ExecuterCalls.Add(callInfo);
                         }
-                    }
 
-                    // --- Sadece iş class'ı method çağrılarını semantic ile bul ---
-                    foreach (var invocation in methodNode.DescendantNodes().OfType<InvocationExpressionSyntax>())
-                    {
+                        // 2. İş class'ı method çağrıları (semantic check)
                         if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
                         {
                             var methodName = memberAccess.Name.Identifier.Text;
-
-                            // Çağıran değişkenin tipini semantic ile bul
                             var exprSymbolInfo = semanticModel.GetSymbolInfo(memberAccess.Expression);
                             var exprSymbol = exprSymbolInfo.Symbol;
 
@@ -99,13 +90,11 @@ public static class ProjectAnalyzer
 
                             if (typeSymbol != null)
                             {
-                                string fullTypeName = typeSymbol.ToDisplayString(); // Tam namespace ile
+                                string fullTypeName = typeSymbol.ToDisplayString();
                                 string assemblyName = typeSymbol.ContainingAssembly.Name;
-
-                                // Sadece System/Framework class'larını atla, diğerlerini ekle
                                 bool isFramework = assemblyName.StartsWith("System") || assemblyName == "mscorlib";
 
-                                if (!isFramework&& methodName != "InitializeGenericResponse")
+                                if (!isFramework && methodName != "InitializeGenericResponse")
                                 {
                                     if (methodInfo.InvokedMethods == null)
                                         methodInfo.InvokedMethods = new List<InvokeMethod>();
@@ -120,12 +109,10 @@ public static class ProjectAnalyzer
                                         MethodName = methodName,
                                         Namespace = ns
                                     });
-                                    //Console.WriteLine($"\n\t|-> FOUND INVOKED BOA METHOD: \n\t\t Method Name :{methodName} \n\t\t Namespace :{ns} \n\t\t Class Name : {className} ");
-                           
                                 }
                             }
                         }
-                    }
+                    } 
 
                     classInfo.Methods.Add(methodInfo);
                 }
@@ -137,19 +124,18 @@ public static class ProjectAnalyzer
         return allClassInfos;
     }
 
-
     /// <summary>
     /// BOAExecuter çağrısından hem generic parametrelerini, hem de kullanılan değişkenin MethodName'ini bulur.
+    /// Generic blokları eksiksiz parse eder.
     /// </summary>
     private static ExecuterCallInfo? ParseExecuterCall(InvocationExpressionSyntax invocation, string exprString, SyntaxNode root, MethodDeclarationSyntax parentMethod)
     {
-        // BOAExecuter<RequestType, ResponseType>.Execute(...)
         var genericStart = exprString.IndexOf('<');
-        var genericEnd = exprString.IndexOf('>');
-        if (genericStart < 0 || genericEnd < 0) return null;
+        if (genericStart < 0) return null;
 
-        var genericTypes = exprString.Substring(genericStart + 1, genericEnd - genericStart - 1)
-                            .Split(',').Select(x => x.Trim()).ToList();
+        var genericBlock = ExtractGenericBlock(exprString, genericStart);
+        var genericTypes = SplitGenericTypes(genericBlock);
+
         if (genericTypes.Count < 2) return null;
 
         string requestType = genericTypes[0];
@@ -164,7 +150,6 @@ public static class ProjectAnalyzer
             var arg = invocation.ArgumentList.Arguments[0];
             requestVarName = arg.ToString();
 
-            // 1. Önce variable initializer (var someVar = new ... { MethodName = "..." }) içinde ara
             var variableDecls = root.DescendantNodes().OfType<VariableDeclaratorSyntax>()
                 .Where(v => v.Identifier.Text == requestVarName);
 
@@ -185,7 +170,6 @@ public static class ProjectAnalyzer
                 }
             }
 
-            // 2. Eğer bulamazsa, method body'de someVar.MethodName = "..." atamalarını da tara
             if (string.IsNullOrEmpty(methodName) && parentMethod != null)
             {
                 var assignments = parentMethod.DescendantNodes()
@@ -205,7 +189,6 @@ public static class ProjectAnalyzer
             }
         }
 
-        //Console.WriteLine($"\n\t|-> FOUND EXECUTER CALL:  \n\t\t BOAExecuter<{requestType}, {responseType}>.Execute({requestVarName})  \n\t\t Request Type: {requestType}   \n\t\t Response Type: {responseType} \n\t\t MethodName: {methodName}");
         return new ExecuterCallInfo
         {
             RequestType = requestType,
@@ -213,5 +196,43 @@ public static class ProjectAnalyzer
             MethodName = methodName,
             RequestVariableName = requestVarName
         };
+    }
+
+    /// <summary>
+    /// Girilen stringte, açılış <'ten itibaren tüm generic bloğunu tam olarak çıkarır.
+    /// </summary>
+    private static string ExtractGenericBlock(string exprString, int start)
+    {
+        int depth = 0;
+        int i = start;
+        for (; i < exprString.Length; i++)
+        {
+            if (exprString[i] == '<') depth++;
+            else if (exprString[i] == '>') depth--;
+            if (depth == 0) break;
+        }
+        return exprString.Substring(start + 1, i - start - 1); // "<" hariç, ">" hariç
+    }
+
+    /// <summary>
+    /// Generic blok içini dıştaki virgüllere göre ayırır. (İç içe genericlerde hata yapmaz.)
+    /// </summary>
+    private static List<string> SplitGenericTypes(string genericBlock)
+    {
+        var types = new List<string>();
+        int depth = 0;
+        int last = 0;
+        for (int i = 0; i < genericBlock.Length; i++)
+        {
+            if (genericBlock[i] == '<') depth++;
+            else if (genericBlock[i] == '>') depth--;
+            else if (genericBlock[i] == ',' && depth == 0)
+            {
+                types.Add(genericBlock.Substring(last, i - last).Trim());
+                last = i + 1;
+            }
+        }
+        types.Add(genericBlock.Substring(last).Trim());
+        return types;
     }
 }
