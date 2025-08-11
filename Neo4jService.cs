@@ -16,12 +16,18 @@ public class Neo4jService
         await session.RunAsync(query, new { className, namespaceName });
     }
 
-    public async Task CreateMethodNodeAsync(string methodName, string className, string namespaceName)
+    public async Task CreateMethodNodeAsync(string methodName, string className, string namespaceName,
+    string requestType, string responseType)
     {
-        var query = "MERGE (m:Method {name: $methodName, className: $className, namespace: $namespaceName})";
+        var query = @"
+    MERGE (m:Method {name:$methodName, className:$className, namespace:$namespaceName})
+    ON CREATE SET m.requestType=$requestType, m.responseType=$responseType
+    ON MATCH  SET m.requestType=coalesce(m.requestType,$requestType),
+                m.responseType=coalesce(m.responseType,$responseType)";
         await using var session = _driver.AsyncSession();
-        await session.RunAsync(query, new { methodName, className, namespaceName });
+        await session.RunAsync(query, new { methodName, className, namespaceName, requestType, responseType });
     }
+
 
     public async Task CreateClassHasMethodRelationAsync(string className, string namespaceName, string methodName)
     {
@@ -49,4 +55,20 @@ public class Neo4jService
             tgtNamespace, tgtClass, tgtMethod
         });
     }
+
+    public async Task CreateExecuterRelationBySignatureAsync(    string srcNamespace, string srcClass, string srcMethod,
+    string targetMethodName, string targetRequestType, string targetResponseType)
+    {
+        var query = @"
+            MATCH (src:Method {namespace:$srcNamespace, className:$srcClass, name:$srcMethod})
+            MATCH (tgt:Method {name:$targetMethodName})
+            WHERE tgt.requestType = $targetRequestType AND tgt.responseType = $targetResponseType
+            MERGE (src)-[:EXECUTES {via:'BOAExecuter'}]->(tgt)";
+        await using var session = _driver.AsyncSession();
+        await session.RunAsync(query, new {
+            srcNamespace, srcClass, srcMethod,
+            targetMethodName, targetRequestType, targetResponseType
+        });
+    }
+
 }

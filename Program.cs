@@ -3,8 +3,7 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Loans.Dealer";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-code-4-extruction"; //"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-code-4-extruction/relation-case";
-        // "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-codes/noname";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-codes/copy";
+        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Loans.Dealer";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
         var classInfos = ProjectAnalyzer.AnalyzeProject(rootFolder);
         
         //TODO: Console
@@ -42,7 +41,7 @@ class Program
 
             foreach (var m in ci.Methods)
             {
-                await neo4jService.CreateMethodNodeAsync(m.Name, ci.Name, ci.Namespace);
+                await neo4jService.CreateMethodNodeAsync(m.Name, ci.Name, ci.Namespace,m.RequestType, m.ResponseType);
                 await neo4jService.CreateClassHasMethodRelationAsync(ci.Name, ci.Namespace, m.Name);
             }
         }
@@ -74,11 +73,9 @@ class Program
                 {
                     if (!string.IsNullOrEmpty(ex.MethodName))
                     {
-                        // Target methodun class ve namespace'i yoksa, boş bırakılır/geliştirilebilir.
-                        await neo4jService.CreateMethodCallsMethodRelationAsync(
+                        await neo4jService.CreateExecuterRelationBySignatureAsync(
                             srcNamespace, srcClass, srcMethod,
-                            "", "", ex.MethodName,
-                            "EXECUTES"
+                            ex.MethodName, ex.RequestType, ex.ResponseType
                         );
                     }
                 }
