@@ -1,9 +1,9 @@
 ﻿using ExecuterFinder.Models;
 class Program
 {
-    static void Main(string[] args)
+    static async Task Main(string[] args)
     {
-        string rootFolder = args.Length > 0 ? args[0] :"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-code-4-extruction"; //"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-code-4-extruction/relation-case";
+        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Loans.Dealer";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-code-4-extruction"; //"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-code-4-extruction/relation-case";
         // "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-codes/noname";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-codes/copy";
         var classInfos = ProjectAnalyzer.AnalyzeProject(rootFolder);
         
@@ -29,6 +29,58 @@ class Program
                     //Console.WriteLine($"Invoked Method: {ec.Namespace}.{ec.ClassName}.{ec.MethodName}");
                     Console.WriteLine($"\n\t|-> FOUND INVOKED BOA METHOD: \n\t\t Method Name :{ec.MethodName} \n\t\t Namespace :{ec.Namespace} \n\t\t Class Name : {ec.ClassName} ");
                            
+                }
+            }
+        }
+
+
+        var neo4jService = new Neo4jService("bolt://localhost:7687", "neo4j", "password");
+        // 1. Tüm Class ve Method nodelarını oluştur
+        foreach (var ci in classInfos)
+        {
+            await neo4jService.CreateClassNodeAsync(ci.Name, ci.Namespace);
+
+            foreach (var m in ci.Methods)
+            {
+                await neo4jService.CreateMethodNodeAsync(m.Name, ci.Name, ci.Namespace);
+                await neo4jService.CreateClassHasMethodRelationAsync(ci.Name, ci.Namespace, m.Name);
+            }
+        }
+
+        // 2. Methodlar arası relationları kur (calls, executes)
+        foreach (var ci in classInfos)
+        {
+            foreach (var m in ci.Methods)
+            {
+                string srcNamespace = ci.Namespace;
+                string srcClass = ci.Name;
+                string srcMethod = m.Name;
+
+                // INVOKED METHODS
+                foreach (var im in m.InvokedMethods)
+                {
+                    string tgtNamespace = im.Namespace;
+                    string tgtClass = im.ClassName;
+                    string tgtMethod = im.MethodName;
+                    await neo4jService.CreateMethodCallsMethodRelationAsync(
+                        srcNamespace, srcClass, srcMethod,
+                        tgtNamespace, tgtClass, tgtMethod,
+                        "CALLS"
+                    );
+                }
+
+                // EXECUTER METHODS (ExecuterCallInfo'da target class yoksa sadece method bağlayabilirsin)
+                foreach (var ex in m.ExecuterCalls)
+                {
+                    if (!string.IsNullOrEmpty(ex.MethodName))
+                    {
+                        // Target methodun class ve namespace'i yoksa, boş bırakılır/geliştirilebilir.
+                        await neo4jService.CreateMethodCallsMethodRelationAsync(
+                            srcNamespace, srcClass, srcMethod,
+                            "", "", ex.MethodName,
+                            "EXECUTES"
+                        );
+                    }
                 }
             }
         }
