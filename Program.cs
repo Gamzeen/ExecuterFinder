@@ -3,7 +3,9 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Loans.Dealer";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
+        //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Loans.Dealer";//"/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
+        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
+        //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Kernel.Loans/RetailFinance";
         var classInfos = ProjectAnalyzer.AnalyzeProject(rootFolder);
         
         //TODO: Console

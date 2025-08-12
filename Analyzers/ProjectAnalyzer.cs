@@ -18,6 +18,7 @@ public static class ProjectAnalyzer
             var code = File.ReadAllText(file);
             var syntaxTree = CSharpSyntaxTree.ParseText(code);
 
+            // Minimal referanslar: BCL (object, linq)
             var refs = new List<MetadataReference>
             {
                 MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
@@ -26,18 +27,13 @@ public static class ProjectAnalyzer
 
             var compilation = CSharpCompilation.Create("Analysis", new[] { syntaxTree }, refs);
             var semanticModel = compilation.GetSemanticModel(syntaxTree);
-
             var root = syntaxTree.GetCompilationUnitRoot();
 
             foreach (var classNode in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
             {
-                // NAMESPACE'İ BUL
-                string classNamespace = "";
-                var namespaceNode = classNode.Ancestors().OfType<NamespaceDeclarationSyntax>().FirstOrDefault();
-                if (namespaceNode != null)
-                    classNamespace = namespaceNode.Name.ToString();
-                else
-                    classNamespace = "(global)";
+                // Namespace
+                string classNamespace = classNode.Ancestors().OfType<BaseNamespaceDeclarationSyntax>()
+                                                 .FirstOrDefault()?.Name.ToString() ?? "(global)";
 
                 var classInfo = new ClassInfo
                 {
@@ -54,16 +50,16 @@ public static class ProjectAnalyzer
                         Name = methodNode.Identifier.Text,
                         ResponseType = methodNode.ReturnType.ToString(),
                         RequestType = methodNode.ParameterList.Parameters.Count > 0
-                            ? methodNode.ParameterList.Parameters[0].Type?.ToString() ?? ""
+                            ? (methodNode.ParameterList.Parameters[0].Type?.ToString() ?? "")
                             : ""
                     };
 
-                    
+                    // Method içindeki tum invocation’ları tara
                     foreach (var invocation in methodNode.DescendantNodes().OfType<InvocationExpressionSyntax>())
                     {
                         var exprString = invocation.ToString();
 
-                        // 1. BOAExecuter<TRequest, TResponse>.Execute() kontrolü
+                        // 1) BOAExecuter<,> çağrıları
                         if (exprString.StartsWith("BOAExecuter<"))
                         {
                             var callInfo = ParseExecuterCall(invocation, exprString, root, methodNode);
@@ -71,48 +67,57 @@ public static class ProjectAnalyzer
                                 methodInfo.ExecuterCalls.Add(callInfo);
                         }
 
-                        // 2. İş class'ı method çağrıları (semantic check)
+                        // 2) Diğer method çağrıları
                         if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
                         {
                             var methodName = memberAccess.Name.Identifier.Text;
-                            var exprSymbolInfo = semanticModel.GetSymbolInfo(memberAccess.Expression);
-                            var exprSymbol = exprSymbolInfo.Symbol;
 
-                            ITypeSymbol? typeSymbol = null;
-                            if (exprSymbol is ILocalSymbol localSym)
-                                typeSymbol = localSym.Type;
-                            else if (exprSymbol is IParameterSymbol paramSym)
-                                typeSymbol = paramSym.Type;
-                            else if (exprSymbol is IFieldSymbol fieldSym)
-                                typeSymbol = fieldSym.Type;
-                            else if (exprSymbol is IPropertySymbol propSym)
-                                typeSymbol = propSym.Type;
+                            // Kaynaktaki ifade (boParameter, boRuleEngine gibi)
+                            var expr = memberAccess.Expression;
 
+                            // Önce semantic type’ı almayı dene
+                            ITypeSymbol typeSymbol = TryResolveTypeSymbol(semanticModel, expr);
+
+                            // Tip çözülemezse koddan tip ismini çıkarmayı dene (fallback)
+                            string fullTypeNameFromCode = null;
+                            if (typeSymbol == null)
+                                fullTypeNameFromCode = TryResolveTypeNameFromCode(root, classNode, methodNode, expr);
+
+                            // Filtre: BCL/Framework ve yardımcıları at
+                            if (IsSkippableHelperCall(methodName)) continue;
+
+                            // 1) Semantic ile çözüldüyse
                             if (typeSymbol != null)
                             {
+                                if (IsFrameworkOrBuiltin(typeSymbol)) continue;
+
                                 string fullTypeName = typeSymbol.ToDisplayString();
-                                string assemblyName = typeSymbol.ContainingAssembly.Name;
-                                bool isFramework = assemblyName.StartsWith("System") || assemblyName == "mscorlib";
+                                SplitFullName(fullTypeName, out var ns, out var className);
 
-                                if (!isFramework && methodName != "InitializeGenericResponse")
-                                {
-                                    if (methodInfo.InvokedMethods == null)
-                                        methodInfo.InvokedMethods = new List<InvokeMethod>();
+                                AddInvoke(methodInfo, ns, className, methodName);
+                            }
+                            // 2) Fallback ile çözüldüyse
+                            else if (!string.IsNullOrWhiteSpace(fullTypeNameFromCode))
+                            {
+                                // Örn: BOA.Business.Kernel.General.Parameter
+                                SplitFullName(fullTypeNameFromCode, out var ns, out var className);
 
-                                    int lastDot = fullTypeName.LastIndexOf(".");
-                                    string ns = lastDot > 0 ? fullTypeName.Substring(0, lastDot) : "";
-                                    string className = lastDot > 0 ? fullTypeName.Substring(lastDot + 1) : fullTypeName;
+                                // BOA dışı/Framework gibi görünenleri ele
+                                if (string.IsNullOrEmpty(ns)) continue;
+                                if (ns.StartsWith("System") || ns.StartsWith("Microsoft")) continue;
 
-                                    methodInfo.InvokedMethods.Add(new InvokeMethod
-                                    {
-                                        ClassName = className,
-                                        MethodName = methodName,
-                                        Namespace = ns
-                                    });
-                                }
+                                AddInvoke(methodInfo, ns, className, methodName);
                             }
                         }
-                    } 
+                    }
+
+                    // Tekilleştir (aynı hedefe bir defa)
+                    if (methodInfo.InvokedMethods?.Count > 0)
+                    {
+                        methodInfo.InvokedMethods = methodInfo.InvokedMethods
+                            .GroupBy(x => (x.Namespace, x.ClassName, x.MethodName))
+                            .Select(g => g.First()).ToList();
+                    }
 
                     classInfo.Methods.Add(methodInfo);
                 }
@@ -124,9 +129,170 @@ public static class ProjectAnalyzer
         return allClassInfos;
     }
 
+    // ---------- Helpers ----------
+
+    private static void AddInvoke(MethodInfo methodInfo, string ns, string className, string methodName)
+    {
+        if (string.IsNullOrWhiteSpace(className)) return;
+
+        methodInfo.InvokedMethods ??= new List<InvokeMethod>();
+        methodInfo.InvokedMethods.Add(new InvokeMethod
+        {
+            ClassName = className,
+            MethodName = methodName,
+            Namespace = ns ?? ""
+        });
+    }
+
+    /// <summary>Semantic model ile tipi çözmeyi dener. Olmazsa null döner.</summary>
+    private static ITypeSymbol TryResolveTypeSymbol(SemanticModel model, ExpressionSyntax expr)
+    {
+        if (expr == null) return null;
+
+        // 1) Direkt tip bilgisi
+        var tinfo = model.GetTypeInfo(expr);
+        if (tinfo.Type != null && tinfo.Type.Kind != SymbolKind.ErrorType)
+            return tinfo.Type;
+
+        // 2) İfade bir sembol ise (field/param/local/prop) oradan tip
+        var sinfo = model.GetSymbolInfo(expr);
+        var sym = sinfo.Symbol ?? sinfo.CandidateSymbols.FirstOrDefault();
+        if (sym is ILocalSymbol ls && ls.Type?.Kind != SymbolKind.ErrorType) return ls.Type;
+        if (sym is IFieldSymbol fs && fs.Type?.Kind != SymbolKind.ErrorType) return fs.Type;
+        if (sym is IPropertySymbol ps && ps.Type?.Kind != SymbolKind.ErrorType) return ps.Type;
+        if (sym is IParameterSymbol prs && prs.Type?.Kind != SymbolKind.ErrorType) return prs.Type;
+
+        return null;
+    }
+
     /// <summary>
-    /// BOAExecuter çağrısından hem generic parametrelerini, hem de kullanılan değişkenin MethodName'ini bulur.
-    /// Generic blokları eksiksiz parse eder.
+    /// Semantic çözemediğinde, aynı metot/sınıf içinde var/atanan ifadelerden "new X(...)" tipini okur.
+    /// </summary>
+    private static string TryResolveTypeNameFromCode(SyntaxNode root, ClassDeclarationSyntax classNode, MethodDeclarationSyntax methodNode, ExpressionSyntax expr)
+    {
+        // Sadece identifier ise (boParameter gibi) adını yakala
+        string ident = (expr as IdentifierNameSyntax)?.Identifier.Text;
+        if (string.IsNullOrWhiteSpace(ident)) return null;
+
+        // 1) Method içindeki local var tanımı: "var bo = new X(...);"
+        var localDecl = methodNode.DescendantNodes()
+            .OfType<VariableDeclaratorSyntax>()
+            .FirstOrDefault(v => v.Identifier.Text == ident && v.Initializer?.Value is ObjectCreationExpressionSyntax);
+        if (localDecl?.Initializer?.Value is ObjectCreationExpressionSyntax objCreate1)
+        {
+            var typeName = objCreate1.Type?.ToString();
+            return NormalizeTypeName(typeName);
+        }
+
+        // 2) Method içindeki assignment: "bo = new X(...);"
+        var assign = methodNode.DescendantNodes()
+            .OfType<AssignmentExpressionSyntax>()
+            .FirstOrDefault(a => a.Left is IdentifierNameSyntax id && id.Identifier.Text == ident &&
+                                 a.Right is ObjectCreationExpressionSyntax);
+        if (assign?.Right is ObjectCreationExpressionSyntax objCreate2)
+        {
+            var typeName = objCreate2.Type?.ToString();
+            return NormalizeTypeName(typeName);
+        }
+
+        // 3) Sınıf seviyesinde field/properties: "Parameter boParameter = new Parameter(...);" veya auto-prop ataması yoksa en azından bildirim tipini al
+        var fieldDecl = classNode.DescendantNodes().OfType<FieldDeclarationSyntax>()
+            .SelectMany(fd => fd.Declaration.Variables.Select(v => (fd, v)))
+            .FirstOrDefault(p => p.v.Identifier.Text == ident);
+        if (fieldDecl.fd != null)
+        {
+            // Tipi (Qualified) al
+            var t = fieldDecl.fd.Declaration.Type?.ToString();
+            if (!string.IsNullOrWhiteSpace(t)) return NormalizeTypeName(t);
+        }
+
+        var propDecl = classNode.DescendantNodes().OfType<PropertyDeclarationSyntax>()
+            .FirstOrDefault(pd => pd.Identifier.Text == ident);
+        if (propDecl != null)
+        {
+            var t = propDecl.Type?.ToString();
+            if (!string.IsNullOrWhiteSpace(t)) return NormalizeTypeName(t);
+        }
+
+        return null;
+    }
+
+    private static string NormalizeTypeName(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+
+        // generic veya global alias temizliği gibi küçük düzeltmeler yapılabilir
+        // Örn: global::BOA.Business.Kernel.General.Parameter -> BOA.Business.Kernel.General.Parameter
+        if (raw.StartsWith("global::")) raw = raw.Substring("global::".Length);
+        return raw.Trim();
+    }
+
+    private static void SplitFullName(string fullTypeName, out string ns, out string className)
+    {
+        ns = "";
+        className = fullTypeName ?? "";
+        var lastDot = (fullTypeName ?? "").LastIndexOf('.');
+        if (lastDot > 0)
+        {
+            ns = fullTypeName.Substring(0, lastDot);
+            className = fullTypeName.Substring(lastDot + 1);
+        }
+    }
+
+    /// <summary>Framework/BCL vs. BOA ayırımı (semantic tip üzerinden).</summary>
+    private static bool IsFrameworkOrBuiltin(ITypeSymbol t)
+    {
+        if (t == null) return true;
+
+        // Diziler
+        if (t is IArrayTypeSymbol) return true;
+
+        // string ve primitive'ler
+        if (t.SpecialType == SpecialType.System_String) return true;
+        if (t.SpecialType != SpecialType.None) return true; // int, bool, object, vb.
+
+        // Anonymous tip, dynamic
+        if (t.IsAnonymousType) return true;
+
+        // System / Microsoft
+        var ns = t.ContainingNamespace?.ToString() ?? "";
+        if (ns.StartsWith("System") || ns.StartsWith("Microsoft")) return true;
+
+        // Bazı derlemelerde mscorlib adı
+        var asm = t.ContainingAssembly?.Name ?? "";
+        if (asm == "mscorlib" || asm.StartsWith("System") || asm.StartsWith("Microsoft")) return true;
+
+        return false;
+    }
+
+    /// <summary>Framework yardımcılarını hızlıca ele.</summary>
+    private static bool IsSkippableHelperCall(string methodName)
+    {
+        if (string.IsNullOrEmpty(methodName)) return true;
+        switch (methodName)
+        {
+            case "ToString":
+            case "Split":
+            case "Count":
+            case "FindAll":
+            case "AddRange":
+            case "Trim":
+            case "FirstOrDefault":
+            case "Where":
+            case "Select":
+            case "Any":
+            case "All":
+            case "First":
+            case "Last":
+            case "Contains":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// BOAExecuter çağrısından generic parametreleri ve Request değişkeninin MethodName'ini bulur.
     /// </summary>
     private static ExecuterCallInfo? ParseExecuterCall(InvocationExpressionSyntax invocation, string exprString, SyntaxNode root, MethodDeclarationSyntax parentMethod)
     {
@@ -144,12 +310,13 @@ public static class ProjectAnalyzer
         string methodName = "";
         string requestVarName = "";
 
-        // Argument bulma: BOAExecuter<...>.Execute(someVar)
+        // BOAExecuter<...>.Execute(someVar)
         if (invocation.ArgumentList.Arguments.Count > 0)
         {
             var arg = invocation.ArgumentList.Arguments[0];
             requestVarName = arg.ToString();
 
+            // var someVar = new X { MethodName = "..." }
             var variableDecls = root.DescendantNodes().OfType<VariableDeclaratorSyntax>()
                 .Where(v => v.Identifier.Text == requestVarName);
 
@@ -170,13 +337,13 @@ public static class ProjectAnalyzer
                 }
             }
 
+            // someVar.MethodName = "..."
             if (string.IsNullOrEmpty(methodName) && parentMethod != null)
             {
                 var assignments = parentMethod.DescendantNodes()
                     .OfType<AssignmentExpressionSyntax>()
-                    .Where(a =>
-                        a.Left.ToString() == $"{requestVarName}.MethodName" &&
-                        a.Right is LiteralExpressionSyntax);
+                    .Where(a => a.Left.ToString() == $"{requestVarName}.MethodName" &&
+                                a.Right is LiteralExpressionSyntax);
 
                 foreach (var assignment in assignments)
                 {
@@ -198,9 +365,6 @@ public static class ProjectAnalyzer
         };
     }
 
-    /// <summary>
-    /// Girilen stringte, açılış <'ten itibaren tüm generic bloğunu tam olarak çıkarır.
-    /// </summary>
     private static string ExtractGenericBlock(string exprString, int start)
     {
         int depth = 0;
@@ -211,12 +375,9 @@ public static class ProjectAnalyzer
             else if (exprString[i] == '>') depth--;
             if (depth == 0) break;
         }
-        return exprString.Substring(start + 1, i - start - 1); // "<" hariç, ">" hariç
+        return exprString.Substring(start + 1, i - start - 1);
     }
 
-    /// <summary>
-    /// Generic blok içini dıştaki virgüllere göre ayırır. (İç içe genericlerde hata yapmaz.)
-    /// </summary>
     private static List<string> SplitGenericTypes(string genericBlock)
     {
         var types = new List<string>();
