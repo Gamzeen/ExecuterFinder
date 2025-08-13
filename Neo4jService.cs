@@ -17,24 +17,23 @@ public class Neo4jService
     }
 
     public async Task CreateMethodNodeAsync(string methodName, string className, string namespaceName,
-    string requestType, string responseType)
+        string requestType, string responseType)
     {
         var query = @"
-    MERGE (m:Method {name:$methodName, className:$className, namespace:$namespaceName})
-    ON CREATE SET m.requestType=$requestType, m.responseType=$responseType
-    ON MATCH  SET m.requestType=coalesce(m.requestType,$requestType),
-                m.responseType=coalesce(m.responseType,$responseType)";
+MERGE (m:Method {name:$methodName, className:$className, namespace:$namespaceName})
+ON CREATE SET m.requestType=$requestType, m.responseType=$responseType
+ON MATCH  SET m.requestType=coalesce(m.requestType,$requestType),
+            m.responseType=coalesce(m.responseType,$responseType)";
         await using var session = _driver.AsyncSession();
         await session.RunAsync(query, new { methodName, className, namespaceName, requestType, responseType });
     }
 
-
     public async Task CreateClassHasMethodRelationAsync(string className, string namespaceName, string methodName)
     {
         var query = @"
-            MATCH (c:Class {name: $className, namespace: $namespaceName})
-            MATCH (m:Method {name: $methodName, className: $className, namespace: $namespaceName})
-            MERGE (c)-[:HAS_METHOD]->(m)";
+MATCH (c:Class {name: $className, namespace: $namespaceName})
+MATCH (m:Method {name: $methodName, className: $className, namespace: $namespaceName})
+MERGE (c)-[:HAS_METHOD]->(m)";
         await using var session = _driver.AsyncSession();
         await session.RunAsync(query, new { className, namespaceName, methodName });
     }
@@ -45,9 +44,9 @@ public class Neo4jService
         string relationType = "CALLS")
     {
         var query = $@"
-            MATCH (src:Method {{namespace: $srcNamespace, className: $srcClass, name: $srcMethod}})
-            MATCH (tgt:Method {{namespace: $tgtNamespace, className: $tgtClass, name: $tgtMethod}})
-            MERGE (src)-[:{relationType}]->(tgt)";
+MATCH (src:Method {{namespace: $srcNamespace, className: $srcClass, name: $srcMethod}})
+MATCH (tgt:Method {{namespace: $tgtNamespace, className: $tgtClass, name: $tgtMethod}})
+MERGE (src)-[:{relationType}]->(tgt)";
         await using var session = _driver.AsyncSession();
         await session.RunAsync(query, new
         {
@@ -56,14 +55,15 @@ public class Neo4jService
         });
     }
 
-    public async Task CreateExecuterRelationBySignatureAsync(    string srcNamespace, string srcClass, string srcMethod,
-    string targetMethodName, string targetRequestType, string targetResponseType)
+    public async Task CreateExecuterRelationBySignatureAsync(
+        string srcNamespace, string srcClass, string srcMethod,
+        string targetMethodName, string targetRequestType, string targetResponseType)
     {
         var query = @"
-            MATCH (src:Method {namespace:$srcNamespace, className:$srcClass, name:$srcMethod})
-            MATCH (tgt:Method {name:$targetMethodName})
-            WHERE tgt.requestType = $targetRequestType AND tgt.responseType = $targetResponseType
-            MERGE (src)-[:EXECUTES {via:'BOAExecuter'}]->(tgt)";
+MATCH (src:Method {namespace:$srcNamespace, className:$srcClass, name:$srcMethod})
+MATCH (tgt:Method {name:$targetMethodName})
+WHERE tgt.requestType = $targetRequestType AND tgt.responseType = $targetResponseType
+MERGE (src)-[:EXECUTES {via:'BOAExecuter'}]->(tgt)";
         await using var session = _driver.AsyncSession();
         await session.RunAsync(query, new {
             srcNamespace, srcClass, srcMethod,
@@ -71,4 +71,23 @@ public class Neo4jService
         });
     }
 
+    // --- SP grafı (opsiyonel) ---
+    public async Task CreateStoredProcedureNodeAsync(string spName)
+    {
+        var query = @"MERGE (s:StoredProcedure {name:$spName})";
+        await using var session = _driver.AsyncSession();
+        await session.RunAsync(query, new { spName });
+    }
+
+    public async Task CreateMethodExecutesStoredProcedureRelationAsync(
+        string srcNamespace, string srcClass, string srcMethod,
+        string spName)
+    {
+        var query = @"
+MATCH (m:Method {namespace:$srcNamespace, className:$srcClass, name:$srcMethod})
+MERGE (s:StoredProcedure {name:$spName})
+MERGE (m)-[:EXECUTES_SP]->(s)";
+        await using var session = _driver.AsyncSession();
+        await session.RunAsync(query, new { srcNamespace, srcClass, srcMethod, spName });
+    }
 }

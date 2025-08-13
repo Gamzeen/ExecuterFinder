@@ -16,6 +16,7 @@ public class MethodInfo
     public string RequestType { get; set; }
     public List<ExecuterCallInfo> ExecuterCalls { get; set; } = new();
     public List<InvokeMethod> InvokedMethods { get; set; } = new();
+    public List<string> StoredProcedures { get; set; } = new();
 }
 
 public class InvokeMethod
