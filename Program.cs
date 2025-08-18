@@ -5,10 +5,13 @@ class Program
     static async Task Main(string[] args)
     {
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Loans.Dealer";
-        //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
+        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Kernel.Loans/RetailFinance";
-        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA";
-
+        //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA";
+        //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA-Treasury";
+        //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA-BusinessModule-KernelRetailFinance";
+        //string rootFolder = args.Length > 0 ? args[0] :"/Users/gamzenurdemir/Documents/BOA-Treasury/BOA.Treasury.FX";
+        //string rootFolder = args.Length > 0 ? args[0] :"/Users/gamzenurdemir/Documents/Main";
         var classInfos = ProjectAnalyzer.AnalyzeProject(rootFolder);
 
         // Konsol çıktısı (SP dahil)
@@ -43,54 +46,72 @@ class Program
         // --- Neo4j yazımı (istemezsen yoruma al) ---
         var neo4jService = new Neo4jService("bolt://localhost:7687", "neo4j", "password");
 
-        foreach (var ci in classInfos)
+        // Bağlantıyı hemen test et
+        await neo4jService.VerifyAsync();
+
+
+        try
         {
-            await neo4jService.CreateClassNodeAsync(ci.Name, ci.Namespace);
 
-            foreach (var m in ci.Methods)
+
+            foreach (var ci in classInfos)
             {
-                await neo4jService.CreateMethodNodeAsync(m.Name, ci.Name, ci.Namespace, m.RequestType, m.ResponseType);
-                await neo4jService.CreateClassHasMethodRelationAsync(ci.Name, ci.Namespace, m.Name);
-            }
-        }
+                await neo4jService.CreateClassNodeAsync(ci.Name, ci.Namespace);
 
-        foreach (var ci in classInfos)
-        {
-            foreach (var m in ci.Methods)
-            {
-                string srcNamespace = ci.Namespace;
-                string srcClass = ci.Name;
-                string srcMethod = m.Name;
-
-                foreach (var im in m.InvokedMethods)
+                foreach (var m in ci.Methods)
                 {
-                    await neo4jService.CreateMethodCallsMethodRelationAsync(
-                        srcNamespace, srcClass, srcMethod,
-                        im.Namespace, im.ClassName, im.MethodName,
-                        "CALLS"
-                    );
+                    await neo4jService.CreateMethodNodeAsync(m.Name, ci.Name, ci.Namespace, m.RequestType, m.ResponseType);
+                    await neo4jService.CreateClassHasMethodRelationAsync(ci.Name, ci.Namespace, m.Name);
                 }
+            }
 
-                foreach (var ex in m.ExecuterCalls)
+            foreach (var ci in classInfos)
+            {
+                foreach (var m in ci.Methods)
                 {
-                    if (!string.IsNullOrEmpty(ex.MethodName))
+                    string srcNamespace = ci.Namespace;
+                    string srcClass = ci.Name;
+                    string srcMethod = m.Name;
+
+                    foreach (var im in m.InvokedMethods)
                     {
-                        await neo4jService.CreateExecuterRelationBySignatureAsync(
+                        await neo4jService.CreateMethodCallsMethodRelationAsync(
                             srcNamespace, srcClass, srcMethod,
-                            ex.MethodName, ex.RequestType, ex.ResponseType
+                            im.Namespace, im.ClassName, im.MethodName,
+                            "CALLS"
                         );
                     }
-                }
 
-                if (m.StoredProcedures != null && m.StoredProcedures.Count > 0)
-                {
-                    foreach (var sp in m.StoredProcedures.Distinct())
+                    foreach (var ex in m.ExecuterCalls)
                     {
-                        await neo4jService.CreateStoredProcedureNodeAsync(sp);
-                        await neo4jService.CreateMethodExecutesStoredProcedureRelationAsync(srcNamespace, srcClass, srcMethod, sp);
+                        if (!string.IsNullOrEmpty(ex.MethodName))
+                        {
+                            await neo4jService.CreateExecuterRelationBySignatureAsync(
+                                srcNamespace, srcClass, srcMethod,
+                                ex.MethodName, ex.RequestType, ex.ResponseType
+                            );
+                        }
+                    }
+
+                    if (m.StoredProcedures != null && m.StoredProcedures.Count > 0)
+                    {
+                        foreach (var sp in m.StoredProcedures.Distinct())
+                        {
+                            await neo4jService.CreateStoredProcedureNodeAsync(sp);
+                            await neo4jService.CreateMethodExecutesStoredProcedureRelationAsync(srcNamespace, srcClass, srcMethod, sp);
+                        }
                     }
                 }
             }
         }
+
+        catch (System.Exception)
+        {
+
+            Console.WriteLine($"Neo4j hata aldı ve program sonlandırıldı.");
+            throw;
+        }
+        Console.WriteLine($"Program başarıyla tamamlandı.");
+
     }
 }

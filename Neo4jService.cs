@@ -8,6 +8,14 @@ public class Neo4jService
     {
         _driver = GraphDatabase.Driver(uri, AuthTokens.Basic(user, password));
     }
+    
+    public async Task VerifyAsync()
+    {
+        await using var session = _driver.AsyncSession();
+        var result = await session.RunAsync("RETURN 1 AS ok");
+        var record = await result.SingleAsync();
+        Console.WriteLine($"✅ Neo4j connection verified, ping result: {record["ok"]}");
+    }
 
     public async Task CreateClassNodeAsync(string className, string namespaceName)
     {
