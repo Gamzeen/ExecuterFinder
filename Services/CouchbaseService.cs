@@ -2,8 +2,7 @@ using Couchbase;
 using Couchbase.KeyValue;
 using Couchbase.Management.Buckets;
 using Couchbase.Management.Collections;
-using System.Text.Json;
-using ExecuterFinder.Models; 
+using ExecuterFinder.Models;
 
 public sealed class CouchbaseService : IAsyncDisposable
 {
@@ -20,7 +19,7 @@ public sealed class CouchbaseService : IAsyncDisposable
 
     public static async Task<CouchbaseService> ConnectAsync(
         string connectionString = "couchbase://localhost",
-        string username = "Administrator",
+        string username = "admin",
         string password = "password",
         string bucketName = "codegraph",
         string scopeName = "_default",
@@ -32,7 +31,6 @@ public sealed class CouchbaseService : IAsyncDisposable
         if (ensureProvision)
         {
             await EnsureBucketAsync(cluster, bucketName);
-            // Bucket hazır olmadan ilerlemeyelim
             await cluster.WaitUntilReadyAsync(TimeSpan.FromSeconds(20));
             var bucket = await cluster.BucketAsync(bucketName);
             await EnsureScopeAndCollectionAsync(bucket, scopeName, collectionName);
@@ -55,22 +53,17 @@ public sealed class CouchbaseService : IAsyncDisposable
 
     // --- Public API ---
 
-    /// <summary>
-    /// Her ClassInfo için tek bir JSON dokümanı upsert eder.
-    /// Key formatı: "{namespace}::{className}"
-    /// </summary>
+    /// <summary>Her ClassInfo için tek bir JSON dokümanı upsert eder.
+    /// Key formatı: "{namespace}::{className}"</summary>
     public async Task UpsertClassesAsync(IEnumerable<ClassInfo> classes)
     {
         var tasks = new List<Task>();
-
         foreach (var ci in classes)
         {
-            // Key: namespace::className  (boşlar ve boşluklar normalize ediliyor)
             var ns = Sanitize(ci.Namespace);
             var cls = Sanitize(ci.Name);
             var key = $"{ns}::{cls}";
 
-            // JSON doküman – mevcut ClassInfo modelin birebir gömülüyor
             var doc = new
             {
                 docType = "ClassInfo",
@@ -78,30 +71,108 @@ public sealed class CouchbaseService : IAsyncDisposable
                 className = ci.Name,
                 classType = ci.ClassType,
                 filePath = ci.FilePath,
-                methods = ci.Methods, // MethodInfo listesi doğrudan JSON olur
+                methods = ci.Methods,
                 createdAt = DateTimeOffset.UtcNow
             };
 
             tasks.Add(_collection.UpsertAsync(key, doc));
         }
-
-        // Paralel yaz (Couchbase SDK kendi bağlantı havuzunu yönetir)
         await Task.WhenAll(tasks);
     }
 
-    // --- Helpers ---
+    /// <summary>
+    /// BOAExecuter hedefini (MethodName + RequestType + ResponseType) ile koleksiyonda arar,
+    /// bulursa (namespace, className) döner.
+    /// </summary>
+    public async Task<(string Namespace, string ClassName)?> ResolveExecuterTargetAsync(ExecuterCallInfo ex)
+    {
+        if (string.IsNullOrWhiteSpace(ex.MethodName) ||
+            string.IsNullOrWhiteSpace(ex.RequestType) ||
+            string.IsNullOrWhiteSpace(ex.ResponseType))
+            return null;
 
+        // Basit N1QL: methods[*].name = ex.MethodName AND request/response eşleşmesi
+        // Not: production'da index eklemen önerilir.
+        var cluster = _cluster;
+        var stmt = @"
+SELECT c.`namespace` AS ns, c.className AS cls
+FROM `" + _bucket.Name + @"`._default._default c
+UNNEST c.methods m
+WHERE m.name = $mname
+  AND m.requestType = $req
+  AND m.responseType = $resp
+LIMIT 1";
+        var q = await cluster.QueryAsync<dynamic>(stmt, options =>
+        {
+            options.Parameter("mname", ex.MethodName);
+            options.Parameter("req", ex.RequestType);
+            options.Parameter("resp", ex.ResponseType);
+        });
+
+        await foreach (var row in q)
+        {
+            string ns = row.ns;
+            string cls = row.cls;
+            return (ns, cls);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Pre‑enrich ile çözülen executer hedeflerini ilgili dokümanların
+    /// methods[i].executerCalls[j] path'lerine sub‑doc patch olarak yazar.
+    /// </summary>
+    public async Task ApplyExecuterResolutionsAsync(
+        IEnumerable<ClassInfo> classes,
+        IReadOnlyDictionary<(string method, string req, string resp), (string ns, string cls)> resolved,
+        ISet<(string ns, string cls)> localClasses)
+    {
+        foreach (var ci in classes)
+        {
+            var key = $"{Sanitize(ci.Namespace)}::{Sanitize(ci.Name)}";
+            var specs = new List<MutateInSpec>();
+
+            for (int mi = 0; mi < ci.Methods.Count; mi++)
+            {
+                var m = ci.Methods[mi];
+                for (int ei = 0; ei < m.ExecuterCalls.Count; ei++)
+                {
+                    var ex = m.ExecuterCalls[ei];
+                    if (string.IsNullOrWhiteSpace(ex.MethodName) ||
+                        string.IsNullOrWhiteSpace(ex.RequestType) ||
+                        string.IsNullOrWhiteSpace(ex.ResponseType))
+                        continue;
+
+                    var sig = (ex.MethodName, ex.RequestType, ex.ResponseType);
+                    if (!resolved.TryGetValue(sig, out var tgt))
+                        continue;
+
+                    var basePath = $"methods[{mi}].executerCalls[{ei}]";
+                    specs.Add(MutateInSpec.Upsert($"{basePath}.namespace", tgt.ns));
+                    specs.Add(MutateInSpec.Upsert($"{basePath}.className", tgt.cls));
+                    var isExt = !localClasses.Contains((tgt.ns, tgt.cls));
+                    specs.Add(MutateInSpec.Upsert($"{basePath}.isExternal", isExt));
+                }
+            }
+
+            if (specs.Count > 0)
+            {
+                await _collection.MutateInAsync(key, specs);
+                Console.WriteLine($"[CB-Update] {key} için {specs.Count/3} executer çözümü JSON'a yazıldı.");
+            }
+        }
+    }
+
+    // --- Helpers ---
     private static string Sanitize(string? s)
     {
         if (string.IsNullOrWhiteSpace(s)) return "(global)";
-        // Key güvenliği için boşluk ve kontrol karakterlerini sadeleştirelim
         return s.Trim().Replace(" ", "");
     }
 
     private static async Task EnsureBucketAsync(ICluster cluster, string bucketName)
     {
         var bm = cluster.Buckets;
-
         var existing = await bm.GetAllBucketsAsync();
         if (!existing.ContainsKey(bucketName))
         {
@@ -121,18 +192,12 @@ public sealed class CouchbaseService : IAsyncDisposable
         var manifest = await cm.GetAllScopesAsync();
 
         var scopeExists = manifest.Any(s => s.Name == scopeName);
-        if (!scopeExists)
-        {
-            await cm.CreateScopeAsync(scopeName);
-        }
+        if (!scopeExists) await cm.CreateScopeAsync(scopeName);
 
         var collExists = manifest
             .FirstOrDefault(s => s.Name == scopeName)?
             .Collections.Any(c => c.Name == collectionName) == true;
 
-        if (!collExists)
-        {
-            await cm.CreateCollectionAsync(new CollectionSpec(scopeName, collectionName));
-        }
+        if (!collExists) await cm.CreateCollectionAsync(new CollectionSpec(scopeName, collectionName));
     }
 }

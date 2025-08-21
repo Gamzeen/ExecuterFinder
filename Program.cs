@@ -4,7 +4,8 @@ class Program
     static async Task Main(string[] args)
     {
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Loans.Dealer";
-        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
+        //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
+        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-code-4-extruction";
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Kernel.Loans/RetailFinance";
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA";
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA-Treasury";
@@ -43,19 +44,51 @@ class Program
         }
 
         #region Couchbase
-        await using (var cb = await CouchbaseService.ConnectAsync(
-            connectionString: "couchbase://localhost",
-            username: "admin",
-            password: "password",
-            bucketName: "codegraph",
-            scopeName: "code",
-            collectionName: "classes",
-            ensureProvision: true      
-        ))
+        // --- PRE‑ENRICH: Couchbase ile hedefleri çöz ve modele işle ---
+        // local class set (external tespiti için)
+        var localClasses = new HashSet<(string ns, string cls)>(
+            classInfos.Select(ci => (ci.Namespace ?? "", ci.Name ?? "")));
+
+        await using var cb = await CouchbaseService.ConnectAsync();
+
+        // (İlk koşuda Couchbase snapshot istersen açabilirsin)
+        await cb.UpsertClassesAsync(classInfos);
+
+        var resolvedTargets = new Dictionary<(string method, string req, string resp), (string ns, string cls)>();
+
+        foreach (var ci in classInfos)
         {
-            await cb.UpsertClassesAsync(classInfos);
-            Console.WriteLine("✅ ClassInfo verileri Couchbase'e yazıldı.");
+            foreach (var m in ci.Methods)
+            {
+                foreach (var ex in m.ExecuterCalls)
+                {
+                    if (string.IsNullOrWhiteSpace(ex.MethodName) ||
+                        string.IsNullOrWhiteSpace(ex.RequestType) ||
+                        string.IsNullOrWhiteSpace(ex.ResponseType))
+                        continue;
+
+                    var key = (ex.MethodName, ex.RequestType, ex.ResponseType);
+                    if (!resolvedTargets.TryGetValue(key, out var tgt))
+                    {
+                        var hit = await cb.ResolveExecuterTargetAsync(ex);
+                        if (hit is null) continue;
+                        tgt = (hit.Value.Namespace, hit.Value.ClassName);
+                        resolvedTargets[key] = tgt;
+
+                        Console.WriteLine($"[Executer-Resolve] {ex.MethodName} <{ex.RequestType},{ex.ResponseType}> -> {tgt.ns}.{tgt.cls}");
+                    }
+
+                    // modeli doldur
+                    ex.Namespace = tgt.ns;
+                    ex.ClassName = tgt.cls;
+                    ex.IsExternal = !localClasses.Contains((tgt.ns, tgt.cls));
+                }
+            }
         }
+
+        // Çözümü Couchbase JSON’larına da yansıt (opsiyonel ama önerilir)
+        await cb.ApplyExecuterResolutionsAsync(classInfos, resolvedTargets, localClasses);
+
         #endregion
 
 
