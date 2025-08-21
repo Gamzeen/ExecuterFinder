@@ -1,5 +1,4 @@
 ﻿using ExecuterFinder.Models;
-
 class Program
 {
     static async Task Main(string[] args)
@@ -43,12 +42,31 @@ class Program
             }
         }
 
+        #region Couchbase
+        await using (var cb = await CouchbaseService.ConnectAsync(
+            connectionString: "couchbase://localhost",
+            username: "admin",
+            password: "password",
+            bucketName: "codegraph",
+            scopeName: "code",
+            collectionName: "classes",
+            ensureProvision: true      
+        ))
+        {
+            await cb.UpsertClassesAsync(classInfos);
+            Console.WriteLine("✅ ClassInfo verileri Couchbase'e yazıldı.");
+        }
+        #endregion
+
+
+
+        
+        #region Neo4j
         // --- Neo4j yazımı (istemezsen yoruma al) ---
         var neo4jService = new Neo4jService("bolt://localhost:7687", "neo4j", "password");
 
         // Bağlantıyı hemen test et
         await neo4jService.VerifyAsync();
-
 
         try
         {
@@ -111,6 +129,7 @@ class Program
             Console.WriteLine($"Neo4j hata aldı ve program sonlandırıldı.");
             throw;
         }
+        #endregion
         Console.WriteLine($"Program başarıyla tamamlandı.");
 
     }
