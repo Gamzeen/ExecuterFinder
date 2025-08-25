@@ -92,10 +92,19 @@ MERGE (src)-[:EXECUTES {via:'BOAExecuter'}]->(tgt)";
         string spName)
     {
         var query = @"
-MATCH (m:Method {namespace:$srcNamespace, className:$srcClass, name:$srcMethod})
-MERGE (s:StoredProcedure {name:$spName})
-MERGE (m)-[:EXECUTES_SP]->(s)";
+        MATCH (m:Method {namespace:$srcNamespace, className:$srcClass, name:$srcMethod})
+        MERGE (s:StoredProcedure {name:$spName})
+        MERGE (m)-[:EXECUTES_SP]->(s)";
         await using var session = _driver.AsyncSession();
         await session.RunAsync(query, new { srcNamespace, srcClass, srcMethod, spName });
     }
+
+    public async Task EnsureMethodNodeAsync(string methodName, string className, string namespaceName)
+    {
+        var query = @"
+        MERGE (m:Method {name:$methodName, className:$className, namespace:$namespaceName})";
+        await using var session = _driver.AsyncSession();
+        await session.RunAsync(query, new { methodName, className, namespaceName });
+    }
+
 }

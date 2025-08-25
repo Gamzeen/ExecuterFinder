@@ -4,8 +4,8 @@ class Program
     static async Task Main(string[] args)
     {
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Loans.Dealer";
-        //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
-        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-code-4-extruction";
+        string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/orc-integ-ralation";
+        //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/boa-codes-for-executer-extraction/boa-code-4-extruction";
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA/BOA.Kernel.Loans/RetailFinance";
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA";
         //string rootFolder = args.Length > 0 ? args[0] : "/Users/gamzenurdemir/Documents/BOA-Treasury";
@@ -126,6 +126,8 @@ class Program
 
                     foreach (var im in m.InvokedMethods)
                     {
+                        await neo4jService.EnsureMethodNodeAsync(im.MethodName, im.ClassName, im.Namespace);
+
                         await neo4jService.CreateMethodCallsMethodRelationAsync(
                             srcNamespace, srcClass, srcMethod,
                             im.Namespace, im.ClassName, im.MethodName,
