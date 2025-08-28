@@ -68,10 +68,10 @@ MERGE (src)-[:{relationType}]->(tgt)";
         string targetMethodName, string targetRequestType, string targetResponseType)
     {
         var query = @"
-MATCH (src:Method {namespace:$srcNamespace, className:$srcClass, name:$srcMethod})
-MATCH (tgt:Method {name:$targetMethodName})
-WHERE tgt.requestType = $targetRequestType AND tgt.responseType = $targetResponseType
-MERGE (src)-[:EXECUTES {via:'BOAExecuter'}]->(tgt)";
+        MATCH (src:Method {namespace:$srcNamespace, className:$srcClass, name:$srcMethod})
+        MATCH (tgt:Method {name:$targetMethodName})
+        WHERE tgt.requestType = $targetRequestType AND tgt.responseType = $targetResponseType
+        MERGE (src)-[:EXECUTES {via:'BOAExecuter'}]->(tgt)";
         await using var session = _driver.AsyncSession();
         await session.RunAsync(query, new {
             srcNamespace, srcClass, srcMethod,
@@ -99,12 +99,35 @@ MERGE (src)-[:EXECUTES {via:'BOAExecuter'}]->(tgt)";
         await session.RunAsync(query, new { srcNamespace, srcClass, srcMethod, spName });
     }
 
+    // Ensure method node exists or create it
     public async Task EnsureMethodNodeAsync(string methodName, string className, string namespaceName)
     {
         var query = @"
-        MERGE (m:Method {name:$methodName, className:$className, namespace:$namespaceName})";
+            MERGE (m:Method {name:$methodName, className:$className, namespace:$namespaceName})";
         await using var session = _driver.AsyncSession();
         await session.RunAsync(query, new { methodName, className, namespaceName });
     }
+
+    public async Task EnsureMethodNodeBySignatureAsync(
+    string methodName, string requestType, string responseType)
+    {
+        var query = @"
+            MERGE (m:Method {name:$methodName, requestType:$requestType, responseType:$responseType})";
+        await using var session = _driver.AsyncSession();
+        await session.RunAsync(query, new { methodName, requestType, responseType });
+    }
+
+    public async Task UpgradeMethodNodeOwnerAsync(
+    string methodName, string requestType, string responseType,
+    string className, string namespaceName)
+    {
+        var query = @"
+        MATCH (m:Method {name:$methodName, requestType:$requestType, responseType:$responseType})
+        SET  m.className  = $className,
+            m.namespace  = $namespaceName";
+        await using var session = _driver.AsyncSession();
+        await session.RunAsync(query, new { methodName, requestType, responseType, className, namespaceName });
+    }
+
 
 }

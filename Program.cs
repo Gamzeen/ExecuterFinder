@@ -115,7 +115,7 @@ class Program
                     await neo4jService.CreateClassHasMethodRelationAsync(ci.Name, ci.Namespace, m.Name);
                 }
             }
-
+            
             foreach (var ci in classInfos)
             {
                 foreach (var m in ci.Methods)
@@ -137,14 +137,51 @@ class Program
 
                     foreach (var ex in m.ExecuterCalls)
                     {
-                        if (!string.IsNullOrEmpty(ex.MethodName))
+                        if (string.IsNullOrEmpty(ex.MethodName)) continue;
+
+                        // 1) Önce owner’ı (ns/class) Couchbase’ten çözmeyi dene
+                        var hit = await cb.ResolveExecuterTargetAsync(ex);
+
+                        if (hit is { } t)
                         {
+                            // (ÖNERİLEN) Eğer daha önce sadece imzaya göre bir node oluşturmuşsan,
+                            // onu owner bilgisiyle upgrade et. (Yoksa MATCH etmez; sorun değil.)
+                            await neo4jService.UpgradeMethodNodeOwnerAsync(
+                                ex.MethodName, ex.RequestType, ex.ResponseType,
+                                t.ClassName, t.Namespace
+                            );
+
+                            // 2) Hedef method node’unu tipleriyle garanti et (boşsa doldurur)
+                            await neo4jService.CreateMethodNodeAsync(
+                                ex.MethodName,
+                                t.ClassName,
+                                t.Namespace,
+                                ex.RequestType,
+                                ex.ResponseType
+                            );
+
+                            // 3) Tam kimlikle EXECUTES
+                            await neo4jService.CreateMethodCallsMethodRelationAsync(
+                                srcNamespace, srcClass, srcMethod,
+                                t.Namespace, t.ClassName, ex.MethodName,
+                                "EXECUTES"
+                            );
+                        }
+                        else
+                        {
+                            // Owner çözülemedi → imzaya göre hedef node’u yine de oluştur
+                            await neo4jService.EnsureMethodNodeBySignatureAsync(
+                                ex.MethodName, ex.RequestType, ex.ResponseType
+                            );
+
+                            // İmzaya göre EXECUTES (mevcut fallback)
                             await neo4jService.CreateExecuterRelationBySignatureAsync(
                                 srcNamespace, srcClass, srcMethod,
                                 ex.MethodName, ex.RequestType, ex.ResponseType
                             );
                         }
                     }
+
 
                     if (m.StoredProcedures != null && m.StoredProcedures.Count > 0)
                     {
